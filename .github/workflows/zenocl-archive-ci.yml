@@ -1,0 +1,88 @@
+
+name: ZENOCL Build
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zenocl-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ZENOCL
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Check source archive
+        run: |
+          test -f zenocl-src.zip || {
+            echo "ERROR: zenocl-src.zip not found"
+            exit 1
+          }
+
+      - name: Extract ZENOCL
+        run: |
+          unzip -q zenocl-src.zip -d extracted
+
+          test -f extracted/zenocl/build.gradle || {
+            echo "ERROR: build.gradle not found in archive"
+            exit 1
+          }
+
+          test -f extracted/zenocl/gradlew || {
+            echo "ERROR: Gradle Wrapper not found"
+            exit 1
+          }
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build ZENOCL
+        working-directory: extracted/zenocl
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon clean build
+
+      - name: Verify JAR
+        run: |
+          mkdir -p release
+
+          find extracted/zenocl/build/libs \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            ! -name "*-dev.jar" \
+            ! -name "*-sources.jar" \
+            -exec cp {} release/ \;
+
+          test -n "$(ls -A release)" || {
+            echo "ERROR: No JAR generated"
+            exit 1
+          }
+
+          ls -lh release/
+
+      - name: Upload ZENOCL
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZENOCL-${{ github.run_number }}
+          path: release/*.jar
+          if-no-files-found: error
+          retention-days: 30
+          

@@ -3,106 +3,104 @@ name: ZENOCL CI
 
 on:
   push:
-    branches:
-      - "**"
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zenocl-ci-${{ github.ref }}
+  group: zenocl-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Compile ZENOCL
+    name: Build ZENOCL
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Java 21
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Configure Gradle
+      - name: Setup Gradle 9.2.0
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.2.0"
 
-      - name: Locate Gradle project
+      - name: Find project
         shell: bash
         run: |
           set -e
 
-          if [ -f "./gradlew" ]; then
-            WRAPPER="./gradlew"
-          elif [ -f "./zenocl/gradlew" ]; then
-            WRAPPER="./zenocl/gradlew"
-          else
-            WRAPPER=$(find . -type f -name gradlew \
-              -not -path './.git/*' -print -quit)
+          BUILD_FILE=$(find . \
+            -type f \
+            \( -name build.gradle -o -name build.gradle.kts \) \
+            -not -path './.git/*' \
+            -not -path '*/build/*' \
+            -print -quit)
 
-            if [ -z "$WRAPPER" ]; then
-              echo "ERROR: Gradle Wrapper not found"
-              exit 1
-            fi
-          fi
-
-          PROJECT_DIR=$(dirname "$WRAPPER")
-
-          if [ ! -f "$PROJECT_DIR/build.gradle" ] && \
-             [ ! -f "$PROJECT_DIR/build.gradle.kts" ]; then
-            echo "ERROR: build.gradle not found in $PROJECT_DIR"
+          if [ -z "$BUILD_FILE" ]; then
+            echo "ERROR: build.gradle not found"
             exit 1
           fi
+
+          PROJECT_DIR=$(dirname "$BUILD_FILE")
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found project: $PROJECT_DIR"
+          echo "Project found: $PROJECT_DIR"
 
-      - name: Build project
-        shell: bash
-        run: |
-          set -e
-          chmod +x gradlew
-          ./gradlew --no-daemon clean build
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            echo "USE_WRAPPER=true" >> "$GITHUB_ENV"
+          else
+            echo "USE_WRAPPER=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
         working-directory: ${{ env.PROJECT_DIR }}
-
-      - name: Prepare release artifact
         shell: bash
         run: |
           set -e
 
-          mkdir -p artifacts
+          if [ "$USE_WRAPPER" = "true" ]; then
+            chmod +x gradlew
+            ./gradlew --no-daemon clean build
+          else
+            gradle --no-daemon clean build
+          fi
 
-          mapfile -t JARS < <(
-            find "$PROJECT_DIR/build/libs" \
-              -maxdepth 1 \
-              -type f \
-              -name "*.jar" \
-              ! -name "*-dev.jar" \
-              ! -name "*-sources.jar"
-          )
+      - name: Check JAR
+        shell: bash
+        run: |
+          set -e
 
-          if [ ${#JARS[@]} -eq 0 ]; then
-            echo "ERROR: No release JAR found"
+          mkdir -p release
+
+          find "$PROJECT_DIR/build/libs" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            ! -name "*-dev.jar" \
+            ! -name "*-sources.jar" \
+            -exec cp {} release/ \;
+
+          if [ -z "$(ls -A release)" ]; then
+            echo "ERROR: No production JAR found"
             exit 1
           fi
 
-          for jar in "${JARS[@]}"; do
-            cp "$jar" artifacts/
-            echo "Prepared: $(basename "$jar")"
-          done
+          ls -lh release/
 
-      - name: Upload compiled JAR
+      - name: Upload ZENOCL
         uses: actions/upload-artifact@v4
         with:
           name: ZENOCL-${{ github.run_number }}
-          path: artifacts/*.jar
+          path: release/*.jar
           if-no-files-found: error
           retention-days: 30
           

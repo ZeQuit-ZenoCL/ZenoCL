@@ -1,0 +1,65 @@
+
+name: ZENOCL Build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zenocl-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ZENOCL
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: zenocl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.0'
+
+      - name: Find project
+        run: |
+          test -f build.gradle
+          test -f gradlew
+          echo "Project found"
+
+      - name: Build
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon clean build
+
+      - name: Check JAR
+        run: |
+          test -n "$(find build/libs -maxdepth 1 -name '*.jar' -print -quit)"
+
+      - name: Upload ZENOCL
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZENOCL-${{ github.run_number }}-${{ github.run_attempt }}
+          path: zenocl/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 14
+          

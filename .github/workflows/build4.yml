@@ -1,0 +1,45 @@
+name: build4
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: build4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find project
+        id: p
+        run: |
+          F=$(find . -maxdepth 3 -name settings.gradle -not -path './.git/*' | head -n1)
+          if [ -z "$F" ]; then echo "settings.gradle not found"; ls -R | head -50; exit 1; fi
+          echo "dir=$(dirname "$F")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.2.0"
+          build-root-directory: ${{ steps.p.outputs.dir }}
+
+      - name: Build
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: gradle build --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZenoCL-${{ github.run_number }}-${{ github.run_attempt }}
+          overwrite: true
+          path: |
+            ${{ steps.p.outputs.dir }}/build/libs/*.jar
+            !${{ steps.p.outputs.dir }}/build/libs/*-sources.jar
+          if-no-files-found: error
